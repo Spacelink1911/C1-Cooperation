@@ -1,0 +1,56 @@
+# Keil uVision Compile Files
+*.axf
+*.build_log.htm
+*.crf
+*.d
+*.dep
+*.dbg
+*.hex
+*.iex
+*.lst
+*.lnp
+*.map
+*.o
+*.sct
+*.scr
+*.scvd
+*.__i
+MDK-ARM/STM32H753VIT6_Develop/
+
+# Keil uVision IDE
+*.uvguix.*
+*.uvoptx
+*.uvprojx.user
+*.uvbuild
+*.uvgui.*
+*.uvguix.*
+
+# 编译中间文件
+/Debug/
+/Release/
+/RTE/
+Listings/
+Objects/
+*.bak
+*.backup
+
+# CubeMX Backup
+*.ioc.bak
+*.ioc~
+
+# IDE Configure
+/.settings/
+/.project
+/.cproject
+/.mxproject
+
+# Other Temp Files
+*.log
+*.swp
+*.swo
+*~
+Thumbs.db
+.DS_Store
+
+# Doxygen Docs
+docs/doxygen/
