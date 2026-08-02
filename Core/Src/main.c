@@ -61,12 +61,14 @@ static void MX_USART1_UART_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_USART3_UART_Init(void);
 /* USER CODE BEGIN PFP */
-
+uint8_t IR_Protocol_CRC8(const uint8_t *data, size_t length);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+static volatile uint8_t IsStarted = 0;
+static volatile uint8_t IsFrameReady = 0;
+uint8_t ir_rx_buffer[14];
 /* USER CODE END 0 */
 
 /**
@@ -104,7 +106,12 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
-
+	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1500);
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1500);
+	HAL_Delay(2000);
+	HAL_UART_Receive_IT(&huart3, ir_rx_buffer, 14);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -114,7 +121,55 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-  }
+		if (HAL_GPIO_ReadPin(START_VEH_GPIO_Port, START_VEH_Pin) == GPIO_PIN_SET)
+		{
+			HAL_Delay(20);
+			if (HAL_GPIO_ReadPin(START_VEH_GPIO_Port, START_VEH_Pin) == GPIO_PIN_SET)
+			{
+				while(HAL_GPIO_ReadPin(START_VEH_GPIO_Port, START_VEH_Pin) == GPIO_PIN_SET) {}
+				if (IsStarted == 0)
+				{
+					HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
+					HAL_GPIO_WritePin(PWR_EN_GPIO_Port, PWR_EN_Pin, GPIO_PIN_SET);
+					HAL_Delay(200);
+					HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+					HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+					HAL_UART_Receive_IT(&huart3, ir_rx_buffer, 14);
+					IsStarted = 1;
+				}
+				else
+				{
+					IsStarted = 0;
+					HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
+					HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_2);
+					HAL_GPIO_WritePin(PWR_EN_GPIO_Port, PWR_EN_Pin, GPIO_PIN_RESET);
+					HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
+				}	
+			}
+		}
+		if (IsFrameReady == 1)
+		{
+			IsFrameReady = 0;
+			if (ir_rx_buffer[0] != 0xAA || ir_rx_buffer[1] != 0x55)
+			{
+				continue;
+			}
+			if (IR_Protocol_CRC8(ir_rx_buffer, 13) != ir_rx_buffer[13])
+			{
+				continue;
+			}
+			if (ir_rx_buffer[11] != 0)
+			{
+				continue;
+			}
+			
+			uint8_t flags = ir_rx_buffer[3];
+			int16_t angle_tenth = (int16_t)(ir_rx_buffer[4] | (ir_rx_buffer[5] << 8));
+			uint16_t strength = (uint16_t)(ir_rx_buffer[6] | (ir_rx_buffer[7] << 8));
+			
+			
+		}
+	}
   /* USER CODE END 3 */
 }
 
@@ -439,7 +494,37 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+	if (huart -> Instance == USART3)
+	{
+		IsFrameReady = 1;
+		HAL_UART_Receive_IT(&huart3, ir_rx_buffer, 14);
+	}
+}
 
+uint8_t IR_Protocol_CRC8(const uint8_t *data, size_t length)
+{
+    uint8_t crc = 0u;
+    size_t i;
+    uint8_t bit;
+
+    if (data == NULL) {
+        return 0u;
+    }
+
+    for (i = 0u; i < length; ++i) {
+        crc ^= data[i];
+        for (bit = 0u; bit < 8u; ++bit) {
+            if ((crc & 0x80u) != 0u) {
+                crc = (uint8_t)((uint8_t)(crc << 1) ^ 0x07u);
+            } else {
+                crc = (uint8_t)(crc << 1);
+            }
+        }
+    }
+    return crc;
+}
 /* USER CODE END 4 */
 
 /**
