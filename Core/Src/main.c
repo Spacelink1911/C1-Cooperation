@@ -69,6 +69,11 @@ uint8_t IR_Protocol_CRC8(const uint8_t *data, size_t length);
 static volatile uint8_t IsStarted = 0;
 static volatile uint8_t IsFrameReady = 0;
 uint8_t ir_rx_buffer[14];
+
+float filtered_angle = 0.0f;
+uint8_t crossing_lock = 0;
+uint32_t lock_start_time = 0;
+int16_t last_valid_angle = 0;
 /* USER CODE END 0 */
 
 /**
@@ -167,7 +172,61 @@ int main(void)
 			int16_t angle_tenth = (int16_t)(ir_rx_buffer[4] | (ir_rx_buffer[5] << 8));
 			uint16_t strength = (uint16_t)(ir_rx_buffer[6] | (ir_rx_buffer[7] << 8));
 			
+			if (crossing_lock == 1)
+			{
+				if (HAL_GetTick() - lock_start_time < 1500)
+				{
+					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1500);
+					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1500);
+					continue;
+				}
+				else
+				{
+					crossing_lock = 0;
+				}
+			}
 			
+			if ((flags & 0x01) != 0)
+			{
+				if (strength < 100)
+				{
+					continue;
+				}
+				last_valid_angle = angle_tenth;
+				uint16_t base_pwm = 1650;
+				if (strength > 800)
+				{
+					base_pwm = 1550;
+				}
+				filtered_angle = 0.6f * angle_tenth + 0.4f * filtered_angle;
+				int16_t act_angle = (int16_t)filtered_angle;
+				
+				int16_t steering_offset = 0;
+				if (act_angle > 50 || act_angle < -50)
+				{
+					steering_offset = (act_angle * 2)/10;
+				}
+				if (steering_offset > 300) steering_offset = 300;
+				if (steering_offset < -300) steering_offset = -300;
+				
+				int16_t motor_L = base_pwm - steering_offset;
+        int16_t motor_R = base_pwm + steering_offset;
+				
+				if (motor_L < 1000) motor_L = 1000;
+        if (motor_L > 2000) motor_L = 2000;
+        if (motor_R < 1000) motor_R = 1000;
+        if (motor_R > 2000) motor_R = 2000;
+				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, (uint16_t)motor_L);
+        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, (uint16_t)motor_R);
+			}
+			else if ((flags & 0x02) != 0)
+			{
+				if (last_valid_angle < 30 && last_valid_angle > -30)
+				{
+					crossing_lock = 1;
+					lock_start_time = HAL_GetTick();
+				}
+			}
 		}
 	}
   /* USER CODE END 3 */
