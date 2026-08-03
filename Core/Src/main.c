@@ -31,7 +31,17 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define MOTOR_STOP 1500
+#define MOTOR_CRUISE 1650
+#define MOTOR_SLOW 1550
+#define MOTORL_FORWARD_MAX 2000
+#define MOTORL_BACKWARD_MAX 1000
+#define MOTORL_FOWARD_MIN 1520
+#define MOTORL_BACKWARD_MIN 1480
+#define MOTORR_FORWARD_MAX 2000
+#define MOTORR_BACKWARD_MAX 1000
+#define MOTORR_FOWARD_MIN 1520
+#define MOTORR_BACKWARD_MIN 1480
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -60,6 +70,7 @@ static void MX_TIM1_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_USART3_UART_Init(void);
+static uint16_t Power_To_PWM(float power);
 /* USER CODE BEGIN PFP */
 uint8_t IR_Protocol_CRC8(const uint8_t *data, size_t length);
 /* USER CODE END PFP */
@@ -69,7 +80,9 @@ uint8_t IR_Protocol_CRC8(const uint8_t *data, size_t length);
 static volatile uint8_t IsStarted = 0;
 static volatile uint8_t IsFrameReady = 0;
 uint8_t ir_rx_buffer[14];
+uint8_t imu_rx_buffer[11];
 
+volatile float ship_roll_angle = 0.0f;
 float filtered_angle = 0.0f;
 uint8_t crossing_lock = 0;
 uint32_t lock_start_time = 0;
@@ -113,8 +126,8 @@ int main(void)
   /* USER CODE BEGIN 2 */
 	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1500);
-	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1500);
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, MOTOR_STOP);
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, MOTOR_STOP);
 	HAL_Delay(2000);
 	HAL_UART_Receive_IT(&huart3, ir_rx_buffer, 14);
   /* USER CODE END 2 */
@@ -176,8 +189,8 @@ int main(void)
 			{
 				if (HAL_GetTick() - lock_start_time < 1500)
 				{
-					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1500);
-					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1500);
+					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, MOTOR_STOP);
+					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, MOTOR_STOP);
 					continue;
 				}
 				else
@@ -193,10 +206,10 @@ int main(void)
 					continue;
 				}
 				last_valid_angle = angle_tenth;
-				uint16_t base_pwm = 1650;
+				uint16_t base_pwm = MOTOR_CRUISE;
 				if (strength > 800)
 				{
-					base_pwm = 1550;
+					base_pwm = MOTOR_SLOW;
 				}
 				filtered_angle = 0.6f * angle_tenth + 0.4f * filtered_angle;
 				int16_t act_angle = (int16_t)filtered_angle;
@@ -212,10 +225,11 @@ int main(void)
 				int16_t motor_L = base_pwm - steering_offset;
         int16_t motor_R = base_pwm + steering_offset;
 				
-				if (motor_L < 1000) motor_L = 1000;
-        if (motor_L > 2000) motor_L = 2000;
-        if (motor_R < 1000) motor_R = 1000;
-        if (motor_R > 2000) motor_R = 2000;
+				if (motor_L < MOTORL_BACKWARD_MAX) motor_L = MOTORL_BACKWARD_MAX;
+        if (motor_L > MOTORL_FORWARD_MAX) motor_L = MOTORL_FORWARD_MAX;
+        if (motor_R < MOTORR_BACKWARD_MAX) motor_R = MOTORR_BACKWARD_MAX;
+        if (motor_R > MOTORR_FORWARD_MAX) motor_R = MOTORR_FORWARD_MAX;
+				
 				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, (uint16_t)motor_L);
         __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, (uint16_t)motor_R);
 			}
@@ -555,6 +569,10 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
+	if (huart -> Instance == USART1)
+	{
+		HAL_UART_Receive_IT(&huart1, imu_rx_buffer, 11);
+	}
 	if (huart -> Instance == USART3)
 	{
 		IsFrameReady = 1;
@@ -583,6 +601,63 @@ uint8_t IR_Protocol_CRC8(const uint8_t *data, size_t length)
         }
     }
     return crc;
+}
+
+uint16_t Power_To_PWM_L(float power)
+{
+	int32_t pwmL = MOTOR_STOP;
+	if (power > 0.0f)
+	{
+		pwmL = MOTOR_STOP + (int32_t)(power * (MOTORL_FORWARD_MAX - MOTOR_STOP));
+	}
+	else if (power < 0.0f)
+	{
+		pwmL = MOTOR_STOP + (int32_t)(power * (MOTOR_STOP - MOTORL_FORWARD_MAX));
+	}
+	
+	if ((pwmL > MOTOR_STOP && pwmL < MOTORL_FOWARD_MIN) || (pwmL < MOTOR_STOP && pwmL > MOTORL_FOWARD_MIN))
+	{
+		pwmL = MOTOR_STOP;
+	}
+	
+	if (pwmL > MOTORL_FORWARD_MAX)
+	{
+		pwmL = MOTORL_FORWARD_MAX;
+	}
+	if (pwmL < MOTORL_BACKWARD_MAX)
+	{
+		pwmL = MOTORL_BACKWARD_MAX;
+	}
+	return (uint16_t)pwmL;
+}
+
+uint16_t Power_To_PWM_R(float power)
+{
+	int32_t pwmR = MOTOR_STOP;
+		if (power > 0.0f)
+	{
+		pwmR = MOTOR_STOP + (int32_t)(power * (MOTORR_FORWARD_MAX - MOTOR_STOP));
+	}
+	else if (power < 0.0f)
+	{
+		pwmR = MOTOR_STOP + (int32_t)(power * (MOTOR_STOP - MOTORR_FORWARD_MAX));
+	}
+	
+	if ((pwmR > MOTOR_STOP && pwmR < MOTORL_FOWARD_MIN) || (pwmR < MOTOR_STOP && pwmR > MOTORL_FOWARD_MIN))
+	{
+		pwmR = MOTOR_STOP;
+	}
+	
+	if (pwmR > MOTORR_FORWARD_MAX)
+	{
+		pwmR = MOTORR_FORWARD_MAX;
+	}
+	
+	if (pwmR > MOTORR_BACKWARD_MAX)
+	{
+		pwmR = MOTORR_BACKWARD_MAX;
+	}
+	
 }
 /* USER CODE END 4 */
 
